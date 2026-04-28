@@ -6,7 +6,12 @@ import SwiftData
 @MainActor
 @Observable
 final class NowListeningPlayer {
-    enum NavLevel: Equatable {
+    enum NavStep: Hashable {
+        case source(Source)
+        case headline(Headline)
+    }
+
+    enum Level: Equatable {
         case sources
         case headlines
         case article
@@ -18,9 +23,10 @@ final class NowListeningPlayer {
         case paused
     }
 
-    private(set) var level: NavLevel = .sources
+    var path: [NavStep] = []
+
     private(set) var speechState: SpeechState = .idle
-    private(set) var lastError: String?
+    var lastError: String?
 
     private(set) var allSources: [Source] = []
     private(set) var sourceIndex: Int = 0
@@ -28,14 +34,26 @@ final class NowListeningPlayer {
     private(set) var sortedHeadlines: [Headline] = []
     private(set) var headlineIndex: Int = 0
 
+    private(set) var currentArticleBody: String?
+    private(set) var isLoadingArticle: Bool = false
+    private(set) var articleError: String?
+
+    var level: Level {
+        switch path.count {
+        case 0: return .sources
+        case 1: return .headlines
+        default: return .article
+        }
+    }
+
     var currentSource: Source? {
-        guard allSources.indices.contains(sourceIndex) else { return nil }
-        return allSources[sourceIndex]
+        if case .source(let s) = path.first { return s }
+        return allSources.indices.contains(sourceIndex) ? allSources[sourceIndex] : nil
     }
 
     var currentHeadline: Headline? {
-        guard sortedHeadlines.indices.contains(headlineIndex) else { return nil }
-        return sortedHeadlines[headlineIndex]
+        if path.count >= 2, case .headline(let h) = path[1] { return h }
+        return sortedHeadlines.indices.contains(headlineIndex) ? sortedHeadlines[headlineIndex] : nil
     }
 
     private(set) var availableVoices: [AVSpeechSynthesisVoice] = []
@@ -85,7 +103,63 @@ final class NowListeningPlayer {
         }
     }
 
-    // MARK: - Navigation (level-aware)
+    // MARK: - Cursor selection (called from list rows on tap)
+
+    func setSourceCursor(_ source: Source) {
+        guard let idx = allSources.firstIndex(where: { $0.persistentModelID == source.persistentModelID }) else { return }
+        sourceIndex = idx
+    }
+
+    func setHeadlineCursor(_ headline: Headline) {
+        guard let idx = sortedHeadlines.firstIndex(where: { $0.persistentModelID == headline.persistentModelID }) else { return }
+        headlineIndex = idx
+    }
+
+    // MARK: - View lifecycle hooks
+
+    func didEnterHeadlines(source: Source) {
+        sortedHeadlines = source.headlines.sorted { lhs, rhs in
+            (lhs.publishedAt ?? lhs.fetchedAt) > (rhs.publishedAt ?? rhs.fetchedAt)
+        }
+        setSourceCursor(source)
+        if !sortedHeadlines.indices.contains(headlineIndex) {
+            headlineIndex = 0
+        }
+        speakCurrentHeadlineTitle()
+    }
+
+    func didLeaveHeadlines() {
+        synthesizer.stop()
+        sortedHeadlines = []
+        headlineIndex = 0
+    }
+
+    func didEnterArticle(headline: Headline) async {
+        setHeadlineCursor(headline)
+        synthesizer.stop()
+        currentArticleBody = nil
+        articleError = nil
+        lastError = nil
+        isLoadingArticle = true
+        do {
+            let body = try await ensureArticleBody(for: headline)
+            currentArticleBody = body
+            isLoadingArticle = false
+            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
+        } catch {
+            articleError = error.localizedDescription
+            isLoadingArticle = false
+        }
+    }
+
+    func didLeaveArticle() {
+        synthesizer.stop()
+        currentArticleBody = nil
+        isLoadingArticle = false
+        articleError = nil
+    }
+
+    // MARK: - Navigation / transport
 
     func next() {
         switch level {
@@ -117,17 +191,14 @@ final class NowListeningPlayer {
         }
     }
 
-    func go() async {
+    func go() {
         switch level {
         case .sources:
             guard let source = currentSource else { return }
-            loadHeadlines(for: source)
-            level = .headlines
-            speakCurrentHeadlineTitle()
+            path.append(.source(source))
         case .headlines:
             guard let headline = currentHeadline else { return }
-            level = .article
-            await readArticle(headline: headline)
+            path.append(.headline(headline))
         case .article:
             break
         }
@@ -136,7 +207,7 @@ final class NowListeningPlayer {
     func stop() {
         synthesizer.stop()
         if level == .article {
-            level = .headlines
+            path.removeLast()
         }
     }
 
@@ -152,22 +223,12 @@ final class NowListeningPlayer {
         }
     }
 
-    func backToSources() {
-        synthesizer.stop()
-        level = .sources
-        sortedHeadlines = []
-        headlineIndex = 0
-    }
-
-    // MARK: - Tap-driven source picking (toolbar)
-
-    func selectSource(_ source: Source) {
-        guard let idx = allSources.firstIndex(where: { $0.persistentModelID == source.persistentModelID }) else { return }
-        synthesizer.stop()
-        sourceIndex = idx
-        level = .sources
-        sortedHeadlines = []
-        headlineIndex = 0
+    func togglePauseResume() {
+        switch speechState {
+        case .speaking: pause()
+        case .paused: resume()
+        case .idle: break
+        }
     }
 
     // MARK: - Voice listening
@@ -243,13 +304,6 @@ final class NowListeningPlayer {
 
     // MARK: - Speech actions
 
-    private func loadHeadlines(for source: Source) {
-        sortedHeadlines = source.headlines.sorted { lhs, rhs in
-            (lhs.publishedAt ?? lhs.fetchedAt) > (rhs.publishedAt ?? rhs.fetchedAt)
-        }
-        headlineIndex = 0
-    }
-
     private func speakCurrentSourceName() {
         guard let source = currentSource else { return }
         synthesizer.stop()
@@ -260,18 +314,6 @@ final class NowListeningPlayer {
         guard let headline = currentHeadline else { return }
         synthesizer.stop()
         synthesizer.speak(headline.title, voice: voice(for: headline.title, languageHint: headline.source?.languageCode))
-    }
-
-    private func readArticle(headline: Headline) async {
-        synthesizer.stop()
-        lastError = nil
-        do {
-            let body = try await ensureArticleBody(for: headline)
-            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
-        } catch {
-            lastError = error.localizedDescription
-            level = .headlines
-        }
     }
 
     private func ensureArticleBody(for headline: Headline) async throws -> String {
@@ -315,9 +357,6 @@ final class NowListeningPlayer {
             speechState = .speaking
         case .didFinish:
             speechState = .idle
-            if level == .article {
-                level = .headlines
-            }
         case .didCancel:
             speechState = .idle
         case .didPause:
@@ -336,7 +375,7 @@ final class NowListeningPlayer {
         switch command {
         case .next: next()
         case .previous: previous()
-        case .go: Task { await go() }
+        case .go: go()
         case .stop: stop()
         case .pause: pause()
         case .resume: resume()
