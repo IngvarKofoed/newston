@@ -24,72 +24,35 @@ struct NowListeningView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if !player.availableVoices.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) {
-                        voicePicker
-                    }
+                    ToolbarItem(placement: .topBarLeading) { voicePicker }
                 }
                 if !sources.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        sourcePicker
-                    }
+                    ToolbarItem(placement: .topBarTrailing) { sourcePicker }
                 }
             }
             .onAppear {
                 player.setModelContext(modelContext)
-                if player.currentSource == nil, let first = sources.first {
-                    player.selectSource(first)
-                }
+                player.setAllSources(sources)
+            }
+            .onChange(of: sources) { _, newSources in
+                player.setAllSources(newSources)
             }
         }
     }
 
     private var listeningSurface: some View {
         VStack(spacing: 24) {
-            if let source = player.currentSource {
-                Text(source.name)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
+            levelBreadcrumb
 
             Spacer(minLength: 12)
 
-            if let headline = player.currentHeadline {
-                VStack(spacing: 8) {
-                    Text(headline.title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                    Text(headlineCounter)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                ContentUnavailableView(
-                    "No headlines yet",
-                    systemImage: "tray",
-                    description: Text("Refresh this source from the Sources tab.")
-                )
-            }
-
-            modeIndicator
+            currentItemCard
 
             Spacer()
 
             transportControls
 
-            if player.currentHeadline != nil {
-                Button {
-                    Task { await player.readCurrentArticle() }
-                } label: {
-                    Label("Read article", systemImage: "doc.text")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.horizontal)
-            }
+            voiceCommandRow
 
             if let error = player.lastError {
                 Text(error)
@@ -110,66 +73,202 @@ struct NowListeningView: View {
         .padding(.vertical)
     }
 
-    private var headlineCounter: String {
-        guard !player.sortedHeadlines.isEmpty else { return "" }
-        return "\(player.currentHeadlineIndex + 1) of \(player.sortedHeadlines.count)"
+    // MARK: - Level UI
+
+    private var levelBreadcrumb: some View {
+        Text(breadcrumbText)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+
+    private var breadcrumbText: String {
+        switch player.level {
+        case .sources:
+            return "Sources"
+        case .headlines:
+            return "\(player.currentSource?.name ?? "—") · Headlines"
+        case .article:
+            return "\(player.currentSource?.name ?? "—") · Reading"
+        }
     }
 
     @ViewBuilder
-    private var modeIndicator: some View {
-        switch player.mode {
-        case .idle:
-            EmptyView()
-        case .announcing:
-            Label(player.playbackState == .paused ? "Paused" : "Announcing headlines",
-                  systemImage: player.playbackState == .paused ? "pause.fill" : "waveform")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .reading:
-            Label(player.playbackState == .paused ? "Paused" : "Reading article",
-                  systemImage: player.playbackState == .paused ? "pause.fill" : "book")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var currentItemCard: some View {
+        switch player.level {
+        case .sources: sourcesCard
+        case .headlines: headlinesCard
+        case .article: articleCard
         }
     }
+
+    private var sourcesCard: some View {
+        VStack(spacing: 8) {
+            if let source = player.currentSource {
+                Text(source.name)
+                    .font(.title)
+                    .fontWeight(.semibold)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                if !player.allSources.isEmpty {
+                    Text("\(player.sourceIndex + 1) of \(player.allSources.count)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            hint("Say \u{201C}go\u{201D} to enter, \u{201C}next\u{201D} or \u{201C}previous\u{201D} to browse sources.")
+        }
+    }
+
+    @ViewBuilder
+    private var headlinesCard: some View {
+        if let headline = player.currentHeadline {
+            VStack(spacing: 8) {
+                Text(headline.title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Text("\(player.headlineIndex + 1) of \(player.sortedHeadlines.count)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                hint("Say \u{201C}go\u{201D} to read the article, \u{201C}next\u{201D} or \u{201C}previous\u{201D} to browse.")
+            }
+        } else {
+            ContentUnavailableView(
+                "No headlines",
+                systemImage: "tray",
+                description: Text("Refresh this source from the Sources tab.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var articleCard: some View {
+        if let headline = player.currentHeadline {
+            VStack(spacing: 12) {
+                Label("Reading article", systemImage: speechStateIcon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(headline.title)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                hint("Say \u{201C}stop\u{201D} to exit, or \u{201C}pause\u{201D} and \u{201C}resume\u{201D}.")
+            }
+        }
+    }
+
+    private var speechStateIcon: String {
+        switch player.speechState {
+        case .speaking: return "waveform"
+        case .paused: return "pause.fill"
+        case .idle: return "book"
+        }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+            .padding(.top, 8)
+    }
+
+    // MARK: - Transport
 
     private var transportControls: some View {
         HStack(spacing: 40) {
-            Button {
-                player.previous()
-            } label: {
-                Image(systemName: "backward.end.fill")
-                    .font(.title)
+            Button { player.previous() } label: {
+                Image(systemName: "backward.end.fill").font(.title)
             }
-            .disabled(!player.canGoPrevious)
+            .disabled(player.level == .article)
 
             Button {
-                switch player.playbackState {
-                case .playing: player.pause()
-                case .paused, .stopped: player.play()
+                if player.level == .article {
+                    if player.speechState == .paused {
+                        player.resume()
+                    } else {
+                        player.pause()
+                    }
+                } else {
+                    Task { await player.go() }
                 }
             } label: {
-                Image(systemName: playPauseIcon)
+                Image(systemName: centerButtonIcon)
                     .font(.system(size: 64))
             }
-            .disabled(player.currentHeadline == nil)
 
-            Button {
-                player.next()
-            } label: {
-                Image(systemName: "forward.end.fill")
-                    .font(.title)
+            Button { player.next() } label: {
+                Image(systemName: "forward.end.fill").font(.title)
             }
-            .disabled(!player.canGoNext)
+            .disabled(player.level == .article)
+        }
+        .overlay(alignment: .trailing) {
+            if player.level == .article {
+                Button { player.stop() } label: {
+                    Image(systemName: "stop.circle.fill").font(.title)
+                }
+                .padding(.trailing)
+                .accessibilityLabel("Stop reading")
+            }
         }
     }
 
-    private var playPauseIcon: String {
-        switch player.playbackState {
-        case .playing: return "pause.circle.fill"
-        case .paused, .stopped: return "play.circle.fill"
+    private var centerButtonIcon: String {
+        switch player.level {
+        case .sources, .headlines:
+            return "play.circle.fill"
+        case .article:
+            return player.speechState == .paused ? "play.circle.fill" : "pause.circle.fill"
         }
     }
+
+    // MARK: - Voice row
+
+    private var voiceCommandRow: some View {
+        VStack(spacing: 6) {
+            Button {
+                Task { await player.toggleVoiceListening() }
+            } label: {
+                Image(systemName: player.voiceListeningEnabled ? "mic.fill" : "mic.slash.fill")
+                    .font(.title2)
+                    .frame(width: 56, height: 56)
+                    .background(
+                        Circle().fill(
+                            player.voiceListeningEnabled ? Color.red : Color.secondary.opacity(0.2)
+                        )
+                    )
+                    .foregroundStyle(player.voiceListeningEnabled ? .white : .secondary)
+            }
+            .accessibilityLabel(player.voiceListeningEnabled ? "Disable voice commands" : "Enable voice commands")
+
+            if player.voicePermissionStatus == .denied {
+                Text("Voice permission denied — enable in Settings → Privacy → Speech Recognition.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            } else if let startupError = player.voiceStartupError, player.voiceListeningEnabled {
+                Text(startupError)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            } else if player.voiceListeningEnabled, !player.lastRecognizedText.isEmpty {
+                Text("\u{201C}\(player.lastRecognizedText)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+        }
+    }
+
+    // MARK: - Pickers
 
     private var voicePicker: some View {
         let groups = Dictionary(grouping: player.availableVoices, by: \.language)

@@ -6,32 +6,37 @@ import SwiftData
 @MainActor
 @Observable
 final class NowListeningPlayer {
-    enum Mode: Equatable {
-        case idle
-        case announcing
-        case reading
+    enum NavLevel: Equatable {
+        case sources
+        case headlines
+        case article
     }
 
-    enum PlaybackState: Equatable {
-        case stopped
-        case playing
+    enum SpeechState: Equatable {
+        case idle
+        case speaking
         case paused
     }
 
-    private(set) var mode: Mode = .idle
-    private(set) var playbackState: PlaybackState = .stopped
-    private(set) var currentSource: Source?
-    private(set) var currentHeadlineIndex: Int = 0
-    private(set) var sortedHeadlines: [Headline] = []
+    private(set) var level: NavLevel = .sources
+    private(set) var speechState: SpeechState = .idle
     private(set) var lastError: String?
 
-    var currentHeadline: Headline? {
-        guard sortedHeadlines.indices.contains(currentHeadlineIndex) else { return nil }
-        return sortedHeadlines[currentHeadlineIndex]
+    private(set) var allSources: [Source] = []
+    private(set) var sourceIndex: Int = 0
+
+    private(set) var sortedHeadlines: [Headline] = []
+    private(set) var headlineIndex: Int = 0
+
+    var currentSource: Source? {
+        guard allSources.indices.contains(sourceIndex) else { return nil }
+        return allSources[sourceIndex]
     }
 
-    var canGoPrevious: Bool { currentHeadlineIndex > 0 }
-    var canGoNext: Bool { currentHeadlineIndex < sortedHeadlines.count - 1 }
+    var currentHeadline: Headline? {
+        guard sortedHeadlines.indices.contains(headlineIndex) else { return nil }
+        return sortedHeadlines[headlineIndex]
+    }
 
     private(set) var availableVoices: [AVSpeechSynthesisVoice] = []
     private(set) var currentVoiceIdentifier: String?
@@ -41,19 +46,148 @@ final class NowListeningPlayer {
         return voice.quality.rawValue < AVSpeechSynthesisVoiceQuality.enhanced.rawValue
     }
 
+    var voiceListeningEnabled: Bool { recognizer.isEnabled }
+    var voicePermissionStatus: SpeechPermissionStatus { recognizer.permissionStatus }
+    var lastRecognizedText: String { recognizer.lastTranscript }
+    var voiceStartupError: String? { recognizer.startupError }
+
     private static let voiceIdentifierKey = "Newston.preferredVoiceIdentifier"
 
     private let synthesizer: SpeechSynthesizing
     private let extractor: ArticleExtracting
+    private let recognizer: SpeechRecognizing
+    private let commandParser = CommandParser()
     private weak var modelContext: ModelContext?
     private var eventsTask: Task<Void, Never>?
+    private var transcriptsTask: Task<Void, Never>?
 
-    init(synthesizer: SpeechSynthesizing? = nil, extractor: ArticleExtracting? = nil) {
+    init(
+        synthesizer: SpeechSynthesizing? = nil,
+        extractor: ArticleExtracting? = nil,
+        recognizer: SpeechRecognizing? = nil
+    ) {
         self.synthesizer = synthesizer ?? SpeechSynthesizerService()
         self.extractor = extractor ?? ArticleExtractor()
+        self.recognizer = recognizer ?? SpeechRecognizerService()
         loadVoices()
         startEventLoop()
+        startTranscriptsLoop()
     }
+
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
+    }
+
+    func setAllSources(_ sources: [Source]) {
+        allSources = sources
+        if sourceIndex >= sources.count {
+            sourceIndex = max(sources.count - 1, 0)
+        }
+    }
+
+    // MARK: - Navigation (level-aware)
+
+    func next() {
+        switch level {
+        case .sources:
+            guard !allSources.isEmpty else { return }
+            sourceIndex = (sourceIndex + 1) % allSources.count
+            speakCurrentSourceName()
+        case .headlines:
+            guard !sortedHeadlines.isEmpty else { return }
+            headlineIndex = (headlineIndex + 1) % sortedHeadlines.count
+            speakCurrentHeadlineTitle()
+        case .article:
+            break
+        }
+    }
+
+    func previous() {
+        switch level {
+        case .sources:
+            guard !allSources.isEmpty else { return }
+            sourceIndex = (sourceIndex - 1 + allSources.count) % allSources.count
+            speakCurrentSourceName()
+        case .headlines:
+            guard !sortedHeadlines.isEmpty else { return }
+            headlineIndex = (headlineIndex - 1 + sortedHeadlines.count) % sortedHeadlines.count
+            speakCurrentHeadlineTitle()
+        case .article:
+            break
+        }
+    }
+
+    func go() async {
+        switch level {
+        case .sources:
+            guard let source = currentSource else { return }
+            loadHeadlines(for: source)
+            level = .headlines
+            speakCurrentHeadlineTitle()
+        case .headlines:
+            guard let headline = currentHeadline else { return }
+            level = .article
+            await readArticle(headline: headline)
+        case .article:
+            break
+        }
+    }
+
+    func stop() {
+        synthesizer.stop()
+        if level == .article {
+            level = .headlines
+        }
+    }
+
+    func pause() {
+        if speechState == .speaking {
+            synthesizer.pause()
+        }
+    }
+
+    func resume() {
+        if speechState == .paused {
+            synthesizer.resume()
+        }
+    }
+
+    func backToSources() {
+        synthesizer.stop()
+        level = .sources
+        sortedHeadlines = []
+        headlineIndex = 0
+    }
+
+    // MARK: - Tap-driven source picking (toolbar)
+
+    func selectSource(_ source: Source) {
+        guard let idx = allSources.firstIndex(where: { $0.persistentModelID == source.persistentModelID }) else { return }
+        synthesizer.stop()
+        sourceIndex = idx
+        level = .sources
+        sortedHeadlines = []
+        headlineIndex = 0
+    }
+
+    // MARK: - Voice listening
+
+    func toggleVoiceListening() async {
+        if recognizer.isEnabled {
+            recognizer.stopListening()
+            return
+        }
+        if recognizer.permissionStatus == .notDetermined {
+            _ = await recognizer.requestAuthorization()
+        }
+        if recognizer.permissionStatus == .authorized {
+            recognizer.startListening()
+        } else {
+            lastError = "Voice recognition permission denied. Enable it in Settings."
+        }
+    }
+
+    // MARK: - Voice picker
 
     func selectVoice(_ voice: AVSpeechSynthesisVoice) {
         currentVoiceIdentifier = voice.identifier
@@ -107,88 +241,38 @@ final class NowListeningPlayer {
             ?? availableVoices.max { $0.quality.rawValue < $1.quality.rawValue }
     }
 
-    func setModelContext(_ context: ModelContext) {
-        self.modelContext = context
-    }
+    // MARK: - Speech actions
 
-    // MARK: - Selection
-
-    func selectSource(_ source: Source) {
-        if currentSource?.persistentModelID != source.persistentModelID {
-            stop()
-            currentSource = source
-            sortedHeadlines = source.headlines.sorted { lhs, rhs in
-                let l = lhs.publishedAt ?? lhs.fetchedAt
-                let r = rhs.publishedAt ?? rhs.fetchedAt
-                return l > r
-            }
-            currentHeadlineIndex = 0
-            lastError = nil
+    private func loadHeadlines(for source: Source) {
+        sortedHeadlines = source.headlines.sorted { lhs, rhs in
+            (lhs.publishedAt ?? lhs.fetchedAt) > (rhs.publishedAt ?? rhs.fetchedAt)
         }
+        headlineIndex = 0
     }
 
-    // MARK: - Transport
-
-    func play() {
-        guard !sortedHeadlines.isEmpty else { return }
-        if playbackState == .paused {
-            synthesizer.resume()
-            playbackState = .playing
-            return
-        }
-        playbackState = .playing
-        if mode == .idle { mode = .announcing }
-        announceCurrentHeadline()
-    }
-
-    func pause() {
-        synthesizer.pause()
-        playbackState = .paused
-    }
-
-    func stop() {
+    private func speakCurrentSourceName() {
+        guard let source = currentSource else { return }
         synthesizer.stop()
-        playbackState = .stopped
-        mode = .idle
+        synthesizer.speak(source.name, voice: voice(for: source.name))
     }
 
-    func next() {
-        guard canGoNext else { return }
-        currentHeadlineIndex += 1
-        if playbackState == .playing {
-            synthesizer.stop()
-            mode = .announcing
-            announceCurrentHeadline()
-        }
-    }
-
-    func previous() {
-        guard canGoPrevious else { return }
-        currentHeadlineIndex -= 1
-        if playbackState == .playing {
-            synthesizer.stop()
-            mode = .announcing
-            announceCurrentHeadline()
-        }
-    }
-
-    func readCurrentArticle() async {
+    private func speakCurrentHeadlineTitle() {
         guard let headline = currentHeadline else { return }
         synthesizer.stop()
-        mode = .reading
-        playbackState = .playing
+        synthesizer.speak(headline.title, voice: voice(for: headline.title))
+    }
+
+    private func readArticle(headline: Headline) async {
+        synthesizer.stop()
         lastError = nil
         do {
             let body = try await ensureArticleBody(for: headline)
             synthesizer.speak(body, voice: voice(for: body))
         } catch {
             lastError = error.localizedDescription
-            mode = .announcing
-            playbackState = .stopped
+            level = .headlines
         }
     }
-
-    // MARK: - Private
 
     private func ensureArticleBody(for headline: Headline) async throws -> String {
         if let cached = headline.article?.bodyText, !cached.isEmpty {
@@ -204,13 +288,7 @@ final class NowListeningPlayer {
         return trimmed
     }
 
-    private func announceCurrentHeadline() {
-        guard let headline = currentHeadline else {
-            stop()
-            return
-        }
-        synthesizer.speak(headline.title, voice: voice(for: headline.title))
-    }
+    // MARK: - Event loops
 
     private func startEventLoop() {
         eventsTask = Task { @MainActor [weak self, events = synthesizer.events] in
@@ -220,30 +298,48 @@ final class NowListeningPlayer {
         }
     }
 
-    private func handleEvent(_ event: SpeechEvent) {
-        guard event == .didFinish else { return }
-        guard playbackState == .playing else { return }
+    private func startTranscriptsLoop() {
+        transcriptsTask = Task { @MainActor [weak self, transcripts = recognizer.transcripts] in
+            for await text in transcripts {
+                self?.handleTranscript(text)
+            }
+        }
+    }
 
-        switch mode {
-        case .announcing:
-            if canGoNext {
-                currentHeadlineIndex += 1
-                announceCurrentHeadline()
-            } else {
-                playbackState = .stopped
-                mode = .idle
+    private func handleEvent(_ event: SpeechEvent) {
+        switch event {
+        case .didStart:
+            speechState = .speaking
+            recognizer.pauseCapture()
+        case .didFinish:
+            speechState = .idle
+            recognizer.resumeCapture()
+            if level == .article {
+                level = .headlines
             }
-        case .reading:
-            mode = .announcing
-            if canGoNext {
-                currentHeadlineIndex += 1
-                announceCurrentHeadline()
-            } else {
-                playbackState = .stopped
-                mode = .idle
-            }
-        case .idle:
-            break
+        case .didCancel:
+            speechState = .idle
+            recognizer.resumeCapture()
+        case .didPause:
+            speechState = .paused
+        case .didContinue:
+            speechState = .speaking
+        }
+    }
+
+    private func handleTranscript(_ text: String) {
+        guard let command = commandParser.parse(text) else { return }
+        dispatch(command)
+    }
+
+    private func dispatch(_ command: VoiceCommand) {
+        switch command {
+        case .next: next()
+        case .previous: previous()
+        case .go: Task { await go() }
+        case .stop: stop()
+        case .pause: pause()
+        case .resume: resume()
         }
     }
 }

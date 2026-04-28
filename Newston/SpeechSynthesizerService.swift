@@ -60,7 +60,11 @@ final class SpeechSynthesizerService: NSObject, SpeechSynthesizing {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.duckOthers, .defaultToSpeaker]
+            )
             try session.setActive(true, options: [])
         } catch {
             // Audio session failure is non-fatal — TTS will still attempt to play.
