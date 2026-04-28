@@ -63,7 +63,7 @@ final class SpeechSynthesizerService: NSObject, SpeechSynthesizing {
             try session.setCategory(
                 .playAndRecord,
                 mode: .voiceChat,
-                options: [.duckOthers, .defaultToSpeaker]
+                options: [.duckOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowBluetoothHFP]
             )
             try session.setActive(true, options: [])
         } catch {
