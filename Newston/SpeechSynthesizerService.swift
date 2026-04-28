@@ -62,7 +62,7 @@ final class SpeechSynthesizerService: NSObject, SpeechSynthesizing {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(
                 .playAndRecord,
-                mode: .default,
+                mode: .voiceChat,
                 options: [.duckOthers, .defaultToSpeaker]
             )
             try session.setActive(true, options: [])

@@ -307,19 +307,19 @@ final class NowListeningPlayer {
     }
 
     private func handleEvent(_ event: SpeechEvent) {
+        // Mic stays live across TTS playback so the user can barge-in
+        // ("stop", "pause") mid-utterance. Echo cancellation is handled
+        // by the audio engine's voice-processing I/O unit.
         switch event {
         case .didStart:
             speechState = .speaking
-            recognizer.pauseCapture()
         case .didFinish:
             speechState = .idle
-            recognizer.resumeCapture()
             if level == .article {
                 level = .headlines
             }
         case .didCancel:
             speechState = .idle
-            recognizer.resumeCapture()
         case .didPause:
             speechState = .paused
         case .didContinue:

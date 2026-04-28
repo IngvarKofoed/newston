@@ -21,8 +21,6 @@ protocol SpeechRecognizing: AnyObject {
     func requestAuthorization() async -> SpeechPermissionStatus
     func startListening()
     func stopListening()
-    func pauseCapture()
-    func resumeCapture()
 }
 
 @MainActor
@@ -90,14 +88,6 @@ final class SpeechRecognizerService: NSObject, SpeechRecognizing {
         stopCapturing()
     }
 
-    func pauseCapture() {
-        if isCapturing { stopCapturing() }
-    }
-
-    func resumeCapture() {
-        if isEnabled && !isCapturing { startCapturing() }
-    }
-
     // MARK: - Private
 
     private func startCapturing() {
@@ -111,6 +101,17 @@ final class SpeechRecognizerService: NSObject, SpeechRecognizing {
         self.recognitionRequest = request
 
         let inputNode = audioEngine.inputNode
+
+        // Enable hardware acoustic echo cancellation so the mic doesn't pick up
+        // our own TTS while it plays through the speaker. Must be set before
+        // querying the input format, since enabling it reconfigures the node.
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            // Non-fatal: recognition still works, but TTS may bleed into the mic.
+            print("setVoiceProcessingEnabled failed: \(error)")
+        }
+
         let format = inputNode.outputFormat(forBus: 0)
 
         guard format.sampleRate > 0, format.channelCount > 0 else {
