@@ -42,9 +42,6 @@ struct HeadlinesListView: View {
         .task {
             player.didEnterHeadlines(source: source)
         }
-        .onDisappear {
-            player.didLeaveHeadlines()
-        }
     }
 
     private func headlineRow(_ headline: Headline, isSpeaking: Bool) -> some View {

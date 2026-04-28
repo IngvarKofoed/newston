@@ -38,6 +38,11 @@ final class NowListeningPlayer {
     private(set) var isLoadingArticle: Bool = false
     private(set) var articleError: String?
 
+    // One-shot signal set by voice "go" before path.append, consumed by the
+    // destination view's `.task`. Lets us narrate audibly on voice-driven
+    // navigation while keeping touch-driven navigation silent.
+    private var pendingVoiceNarration: Bool = false
+
     var level: Level {
         switch path.count {
         case 0: return .sources
@@ -116,6 +121,19 @@ final class NowListeningPlayer {
     }
 
     // MARK: - View lifecycle hooks
+    //
+    // Each "enter" hook is responsible for stopping any in-flight TTS from the
+    // previous level before starting its own. We deliberately do NOT stop TTS
+    // in "leave" hooks: SwiftUI fires `.onDisappear` after the navigation
+    // animation completes (~0.3s), which can land after the next view's
+    // `.task` has already started speaking and silently kill it.
+
+    func didEnterSources() {
+        // Safety reset: clear any flag the user abandoned before .task could
+        // consume it, e.g. voice "go" → quickly pop back out.
+        pendingVoiceNarration = false
+        synthesizer.stop()
+    }
 
     func didEnterHeadlines(source: Source) {
         sortedHeadlines = source.headlines.sorted { lhs, rhs in
@@ -125,13 +143,14 @@ final class NowListeningPlayer {
         if !sortedHeadlines.indices.contains(headlineIndex) {
             headlineIndex = 0
         }
-        speakCurrentHeadlineTitle()
-    }
-
-    func didLeaveHeadlines() {
-        synthesizer.stop()
-        sortedHeadlines = []
-        headlineIndex = 0
+        if pendingVoiceNarration {
+            pendingVoiceNarration = false
+            speakCurrentHeadlineTitle()
+        } else {
+            // Touch entry: stop any in-flight TTS (e.g. article body when
+            // popping back from article view) and stay silent.
+            synthesizer.stop()
+        }
     }
 
     func didEnterArticle(headline: Headline) async {
@@ -141,11 +160,17 @@ final class NowListeningPlayer {
         articleError = nil
         lastError = nil
         isLoadingArticle = true
+        // Capture before await — we don't want a later voice command flipping
+        // the flag mid-extraction.
+        let shouldNarrate = pendingVoiceNarration
+        pendingVoiceNarration = false
         do {
             let body = try await ensureArticleBody(for: headline)
             currentArticleBody = body
             isLoadingArticle = false
-            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
+            if shouldNarrate {
+                synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
+            }
         } catch {
             articleError = error.localizedDescription
             isLoadingArticle = false
@@ -153,7 +178,6 @@ final class NowListeningPlayer {
     }
 
     func didLeaveArticle() {
-        synthesizer.stop()
         currentArticleBody = nil
         isLoadingArticle = false
         articleError = nil
@@ -195,9 +219,15 @@ final class NowListeningPlayer {
         switch level {
         case .sources:
             guard let source = currentSource else { return }
+            // Signal to didEnterHeadlines (fired async by .task) that this
+            // entry is voice-driven and should narrate the first title.
+            pendingVoiceNarration = true
             path.append(.source(source))
         case .headlines:
             guard let headline = currentHeadline else { return }
+            // Signal to didEnterArticle (fired async by .task) that this
+            // entry is voice-driven and should auto-read the body.
+            pendingVoiceNarration = true
             path.append(.headline(headline))
         case .article:
             break
@@ -227,7 +257,13 @@ final class NowListeningPlayer {
         switch speechState {
         case .speaking: pause()
         case .paused: resume()
-        case .idle: break
+        case .idle:
+            // Touch users land here at the article view (silent entry). Start
+            // reading the body if we have one.
+            guard level == .article,
+                  let body = currentArticleBody, !body.isEmpty,
+                  let headline = currentHeadline else { return }
+            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
         }
     }
 

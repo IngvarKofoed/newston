@@ -36,6 +36,9 @@ struct SourcesListView: View {
             }
             ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
         }
+        .task {
+            player.didEnterSources()
+        }
     }
 
     private func sourceRow(_ source: Source, isSpeaking: Bool) -> some View {

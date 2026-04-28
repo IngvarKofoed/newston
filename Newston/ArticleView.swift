@@ -86,7 +86,7 @@ struct ArticleView: View {
                     .font(.system(size: 56))
                     .symbolRenderingMode(.hierarchical)
             }
-            .disabled(player.speechState == .idle)
+            .disabled(playPauseDisabled)
             .accessibilityLabel(playPauseLabel)
 
             Button {
@@ -113,7 +113,15 @@ struct ArticleView: View {
         switch player.speechState {
         case .speaking: return "Pause reading"
         case .paused: return "Resume reading"
-        case .idle: return "Reading"
+        case .idle: return "Start reading"
+        }
+    }
+
+    private var playPauseDisabled: Bool {
+        switch player.speechState {
+        case .speaking, .paused: return false
+        case .idle:
+            return player.currentArticleBody == nil || player.isLoadingArticle
         }
     }
 }
