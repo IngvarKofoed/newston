@@ -199,9 +199,9 @@ final class NowListeningPlayer {
         return AVSpeechSynthesisVoice(identifier: id)
     }
 
-    private func voice(for text: String) -> AVSpeechSynthesisVoice? {
-        guard let detectedLanguage = detectLanguage(text) else { return currentVoice }
-        let prefix = detectedLanguage.lowercased()
+    private func voice(for text: String, languageHint: String? = nil) -> AVSpeechSynthesisVoice? {
+        guard let language = languageHint ?? detectLanguage(text) else { return currentVoice }
+        let prefix = language.lowercased()
         if let currentVoice, currentVoice.language.lowercased().hasPrefix(prefix) {
             return currentVoice
         }
@@ -253,13 +253,13 @@ final class NowListeningPlayer {
     private func speakCurrentSourceName() {
         guard let source = currentSource else { return }
         synthesizer.stop()
-        synthesizer.speak(source.name, voice: voice(for: source.name))
+        synthesizer.speak(source.name, voice: voice(for: source.name, languageHint: source.languageCode))
     }
 
     private func speakCurrentHeadlineTitle() {
         guard let headline = currentHeadline else { return }
         synthesizer.stop()
-        synthesizer.speak(headline.title, voice: voice(for: headline.title))
+        synthesizer.speak(headline.title, voice: voice(for: headline.title, languageHint: headline.source?.languageCode))
     }
 
     private func readArticle(headline: Headline) async {
@@ -267,7 +267,7 @@ final class NowListeningPlayer {
         lastError = nil
         do {
             let body = try await ensureArticleBody(for: headline)
-            synthesizer.speak(body, voice: voice(for: body))
+            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
         } catch {
             lastError = error.localizedDescription
             level = .headlines

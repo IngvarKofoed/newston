@@ -62,6 +62,15 @@ struct FeedService: FeedFetching {
             added += 1
         }
 
+        if source.languageCode == nil {
+            if let detected = await LanguageDetector().detect(
+                homepage: source.url,
+                titles: parsedItems.map(\.title)
+            ) {
+                source.languageCode = detected
+            }
+        }
+
         if modelContext.hasChanges {
             try modelContext.save()
         }

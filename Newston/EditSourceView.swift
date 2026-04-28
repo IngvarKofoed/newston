@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AVFoundation
 
 struct EditSourceView: View {
     @Bindable var source: Source
@@ -52,6 +53,7 @@ struct EditSourceView: View {
             } footer: {
                 Text("Optional. Paste a feed URL if auto-discovery fails. Leave empty to scrape headlines from the homepage.")
             }
+            languageSection
             Section {
                 Button {
                     Task { await coordinator.refresh(source) }
@@ -138,6 +140,45 @@ struct EditSourceView: View {
         source.feedURL = url
         source.usesHTMLFallback = false
         feedURLError = nil
+    }
+
+    private var languageSection: some View {
+        Section {
+            Picker("Language", selection: languageBinding) {
+                Text("Auto-detect").tag(String?.none)
+                ForEach(supportedLanguageCodes, id: \.self) { code in
+                    Text(displayName(for: code)).tag(String?.some(code))
+                }
+            }
+        } header: {
+            Text("Language")
+        } footer: {
+            Text("Used to pick a matching voice. Auto-detect re-runs detection on the next refresh.")
+        }
+    }
+
+    private var languageBinding: Binding<String?> {
+        Binding(
+            get: { source.languageCode },
+            set: { source.languageCode = $0 }
+        )
+    }
+
+    private var supportedLanguageCodes: [String] {
+        var codes = Set<String>()
+        for voice in AVSpeechSynthesisVoice.speechVoices() {
+            if let base = voice.language.split(separator: "-").first {
+                codes.insert(String(base).lowercased())
+            }
+        }
+        if let current = source.languageCode {
+            codes.insert(current.lowercased())
+        }
+        return codes.sorted { displayName(for: $0) < displayName(for: $1) }
+    }
+
+    private func displayName(for code: String) -> String {
+        Locale.current.localizedString(forLanguageCode: code) ?? code
     }
 
     @ViewBuilder
