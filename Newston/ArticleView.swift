@@ -76,9 +76,8 @@ struct ArticleView: View {
     }
 
     private var transportControls: some View {
-        HStack(spacing: 32) {
+        HStack {
             Spacer()
-
             Button {
                 player.togglePauseResume()
             } label: {
@@ -88,16 +87,6 @@ struct ArticleView: View {
             }
             .disabled(playPauseDisabled)
             .accessibilityLabel(playPauseLabel)
-
-            Button {
-                player.stop()
-            } label: {
-                Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 36))
-                    .symbolRenderingMode(.hierarchical)
-            }
-            .accessibilityLabel("Stop reading")
-
             Spacer()
         }
     }
