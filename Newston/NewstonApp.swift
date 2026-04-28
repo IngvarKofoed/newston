@@ -7,6 +7,7 @@ struct NewstonApp: App {
         let schema = Schema([
             Source.self,
             Headline.self,
+            Article.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -18,11 +19,13 @@ struct NewstonApp: App {
     }()
 
     @State private var refreshCoordinator = SourceRefreshCoordinator()
+    @State private var player = NowListeningPlayer()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(refreshCoordinator)
+                .environment(player)
         }
         .modelContainer(sharedModelContainer)
     }

@@ -9,6 +9,9 @@ final class Headline {
     var fetchedAt: Date
     var source: Source?
 
+    @Relationship(deleteRule: .cascade, inverse: \Article.headline)
+    var article: Article?
+
     init(
         title: String,
         articleURL: URL,
