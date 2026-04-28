@@ -29,9 +29,13 @@ The app is organized into layers, each with a clear responsibility. Lower layers
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  UI (SwiftUI Views)                                     │
-│   ├─ Sources list / add source                          │
-│   ├─ Now-listening surface (current source/headline)    │
-│   └─ Settings                                           │
+│   ├─ TabView                                            │
+│   │   ├─ Now Listening (current source/headline,        │
+│   │   │                  transport controls)            │
+│   │   └─ Sources (list, refresh-status badges,          │
+│   │              add/remove, optional drill-in)         │
+│   └─ Add-source flow (URL entry + visible WKWebView     │
+│                       for consent / login)              │
 ├─────────────────────────────────────────────────────────┤
 │  App State (ObservableObject / @Observable)             │
 │   ├─ NavigationState (source, headline, mode)           │
@@ -114,6 +118,10 @@ Matching is keyword-based with reasonable variants ("next", "skip", "go on" → 
 - After `didFinish`, injects a Readability-style script via `evaluateJavaScript(_:)` to extract title + body text from the rendered DOM.
 - Returns plain text suitable for TTS (paragraph breaks preserved as natural pauses).
 - LLM fallback (out of scope for v1) sits behind the same protocol so the call site does not change.
+- Shares a `WKWebsiteDataStore` with the source consent/login flow (below) so cookies and authenticated sessions captured at source-add time apply to article fetches.
+
+### Source consent / login flow
+When the user adds a source, the homepage is loaded in a **visible** `WKWebView` (sheet) so they can dismiss cookie/GDPR consent banners and, if needed, log into paywalled sites. The user dismisses with a manual "Done" button — we do not auto-click consent banners or scrape login forms. Cookies and session storage are persisted via a shared `WKWebsiteDataStore` (created once at app launch) so the off-screen `ArticleExtractor` reuses the same authenticated session for every later fetch from that source.
 
 ## Reactive Flow
 

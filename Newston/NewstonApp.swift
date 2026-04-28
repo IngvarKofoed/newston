@@ -1,10 +1,3 @@
-//
-//  NewstonApp.swift
-//  Newston
-//
-//  Created by Martin Ingvar Kofoed Jensen on 28/04/2026.
-//
-
 import SwiftUI
 import SwiftData
 
@@ -12,7 +5,8 @@ import SwiftData
 struct NewstonApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Source.self,
+            Headline.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -23,9 +17,12 @@ struct NewstonApp: App {
         }
     }()
 
+    @State private var refreshCoordinator = SourceRefreshCoordinator()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environment(refreshCoordinator)
         }
         .modelContainer(sharedModelContainer)
     }
