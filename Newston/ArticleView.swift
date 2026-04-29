@@ -13,10 +13,11 @@ struct ArticleView: View {
                         .font(.title2)
                         .fontWeight(.semibold)
 
-                    if let host = headline.source?.url.host() {
-                        Text(host)
+                    Link(destination: headline.articleURL) {
+                        Text(headline.articleURL.absoluteString)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
 
                     Divider()
