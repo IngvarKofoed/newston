@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import NaturalLanguage
 import SwiftData
 
 @MainActor
@@ -61,22 +60,19 @@ final class NowListeningPlayer {
         return sortedHeadlines.indices.contains(headlineIndex) ? sortedHeadlines[headlineIndex] : nil
     }
 
-    private(set) var availableVoices: [AVSpeechSynthesisVoice] = []
-    private(set) var currentVoiceIdentifier: String?
-
-    var shouldSuggestBetterVoice: Bool {
-        guard let voice = currentVoice else { return true }
-        return voice.quality.rawValue < AVSpeechSynthesisVoiceQuality.enhanced.rawValue
-    }
+    var availableVoices: [AVSpeechSynthesisVoice] { systemSynth?.availableVoices ?? [] }
+    var currentVoiceIdentifier: String? { systemSynth?.currentVoiceIdentifier }
+    var shouldSuggestBetterVoice: Bool { systemSynth?.shouldSuggestBetterVoice ?? false }
 
     var voiceListeningEnabled: Bool { recognizer.isEnabled }
     var voicePermissionStatus: SpeechPermissionStatus { recognizer.permissionStatus }
     var lastRecognizedText: String { recognizer.lastTranscript }
     var voiceStartupError: String? { recognizer.startupError }
 
-    private static let voiceIdentifierKey = "Newston.preferredVoiceIdentifier"
-
     private let synthesizer: SpeechSynthesizing
+    // Typed reference to the AVSpeech synth when active, used for voice
+    // picker pass-throughs. Nil when a non-AVSpeech provider is in use.
+    private let systemSynth: SystemSpeechSynthesizer?
     private let extractor: ArticleExtracting
     private let cleaner: ArticleCleaning
     private let recognizer: SpeechRecognizing
@@ -91,11 +87,12 @@ final class NowListeningPlayer {
         cleaner: ArticleCleaning? = nil,
         recognizer: SpeechRecognizing? = nil
     ) {
-        self.synthesizer = synthesizer ?? SpeechSynthesizerService()
+        let resolvedSynth = synthesizer ?? SystemSpeechSynthesizer()
+        self.synthesizer = resolvedSynth
+        self.systemSynth = resolvedSynth as? SystemSpeechSynthesizer
         self.extractor = extractor ?? ArticleExtractor()
         self.cleaner = cleaner ?? DefaultArticleCleaner()
         self.recognizer = recognizer ?? SpeechRecognizerService()
-        loadVoices()
         startEventLoop()
         startTranscriptsLoop()
     }
@@ -172,7 +169,7 @@ final class NowListeningPlayer {
             currentArticleBody = body
             isLoadingArticle = false
             if shouldNarrate {
-                synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
+                synthesizer.speak(body, language: headline.source?.languageCode)
             }
         } catch {
             articleError = error.localizedDescription
@@ -266,7 +263,7 @@ final class NowListeningPlayer {
             guard level == .article,
                   let body = currentArticleBody, !body.isEmpty,
                   let headline = currentHeadline else { return }
-            synthesizer.speak(body, voice: voice(for: body, languageHint: headline.source?.languageCode))
+            synthesizer.speak(body, language: headline.source?.languageCode)
         }
     }
 
@@ -290,55 +287,7 @@ final class NowListeningPlayer {
     // MARK: - Voice picker
 
     func selectVoice(_ voice: AVSpeechSynthesisVoice) {
-        currentVoiceIdentifier = voice.identifier
-        UserDefaults.standard.set(voice.identifier, forKey: Self.voiceIdentifierKey)
-    }
-
-    private var currentVoice: AVSpeechSynthesisVoice? {
-        guard let id = currentVoiceIdentifier else { return nil }
-        return AVSpeechSynthesisVoice(identifier: id)
-    }
-
-    private func voice(for text: String, languageHint: String? = nil) -> AVSpeechSynthesisVoice? {
-        guard let language = languageHint ?? detectLanguage(text) else { return currentVoice }
-        let prefix = language.lowercased()
-        if let currentVoice, currentVoice.language.lowercased().hasPrefix(prefix) {
-            return currentVoice
-        }
-        let candidates = availableVoices.filter { $0.language.lowercased().hasPrefix(prefix) }
-        if let best = candidates.max(by: { $0.quality.rawValue < $1.quality.rawValue }) {
-            return best
-        }
-        return currentVoice
-    }
-
-    private func detectLanguage(_ text: String) -> String? {
-        guard text.count >= 10 else { return nil }
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(text)
-        return recognizer.dominantLanguage?.rawValue
-    }
-
-    private func loadVoices() {
-        availableVoices = AVSpeechSynthesisVoice.speechVoices().sorted { lhs, rhs in
-            if lhs.language != rhs.language { return lhs.language < rhs.language }
-            if lhs.quality.rawValue != rhs.quality.rawValue {
-                return lhs.quality.rawValue > rhs.quality.rawValue
-            }
-            return lhs.name < rhs.name
-        }
-        currentVoiceIdentifier = pickInitialVoice()?.identifier
-    }
-
-    private func pickInitialVoice() -> AVSpeechSynthesisVoice? {
-        if let saved = UserDefaults.standard.string(forKey: Self.voiceIdentifierKey),
-           let voice = AVSpeechSynthesisVoice(identifier: saved) {
-            return voice
-        }
-        let langCode = Locale.current.language.languageCode?.identifier ?? "en"
-        let candidates = availableVoices.filter { $0.language.lowercased().hasPrefix(langCode.lowercased()) }
-        return candidates.max { $0.quality.rawValue < $1.quality.rawValue }
-            ?? availableVoices.max { $0.quality.rawValue < $1.quality.rawValue }
+        systemSynth?.selectVoice(voice)
     }
 
     // MARK: - Speech actions
@@ -346,13 +295,13 @@ final class NowListeningPlayer {
     private func speakCurrentSourceName() {
         guard let source = currentSource else { return }
         synthesizer.stop()
-        synthesizer.speak(source.name, voice: voice(for: source.name, languageHint: source.languageCode))
+        synthesizer.speak(source.name, language: source.languageCode)
     }
 
     private func speakCurrentHeadlineTitle() {
         guard let headline = currentHeadline else { return }
         synthesizer.stop()
-        synthesizer.speak(headline.title, voice: voice(for: headline.title, languageHint: headline.source?.languageCode))
+        synthesizer.speak(headline.title, language: headline.source?.languageCode)
     }
 
     private func ensureArticleBody(for headline: Headline) async throws -> String {
