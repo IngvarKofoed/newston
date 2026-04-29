@@ -9,6 +9,9 @@ struct RootView: View {
 
             SourcesView()
                 .tabItem { Label("Sources", systemImage: "newspaper") }
+
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }
