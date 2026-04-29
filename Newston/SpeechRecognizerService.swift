@@ -80,7 +80,14 @@ final class SpeechRecognizerService: NSObject, SpeechRecognizing {
         guard permissionStatus == .authorized else { return }
         guard !isEnabled else { return }
         isEnabled = true
-        startCapturing()
+        // Let SwiftUI paint the "listening" state before we block the main
+        // thread on audio engine setup (setVoiceProcessingEnabled alone can
+        // take a couple of seconds on real hardware).
+        Task { @MainActor in
+            await Task.yield()
+            guard isEnabled else { return }
+            startCapturing()
+        }
     }
 
     func stopListening() {
