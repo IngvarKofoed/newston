@@ -37,11 +37,11 @@ Open in Xcode (`Newston.xcodeproj`) for normal development. CLI:
 ```bash
 # Build for the iOS Simulator
 xcodebuild -project Newston.xcodeproj -scheme Newston \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build
+  -destination 'platform=iOS Simulator,name=iPhone 17' build
 
 # Run unit tests
 xcodebuild -project Newston.xcodeproj -scheme Newston \
-  -destination 'platform=iOS Simulator,name=iPhone 16' test
+  -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
 If the named simulator isn't installed, list available destinations with:
