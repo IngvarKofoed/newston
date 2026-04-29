@@ -25,8 +25,37 @@ final class ArticleExtractor: NSObject, ArticleExtracting {
     private var webView: WKWebView?
     private var pendingContinuation: CheckedContinuation<String, Error>?
 
+    private static let readabilityScript: String = {
+        guard let url = Bundle.main.url(forResource: "Readability", withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            return ""
+        }
+        return source
+    }()
+
+    // Readability mutates the document it's given, so clone first. We use
+    // innerText (not Readability's textContent) on the parsed HTML so block
+    // boundaries become real newlines — textContent runs paragraphs together.
+    // Falls back to the raw page if Readability can't parse it.
     private static let extractionScript = """
     (function() {
+        function readableInnerText(html) {
+            var host = document.createElement('div');
+            host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1024px;';
+            host.innerHTML = html;
+            document.body.appendChild(host);
+            var text = host.innerText || host.textContent || '';
+            document.body.removeChild(host);
+            return text;
+        }
+        try {
+            var clone = document.cloneNode(true);
+            var article = new Readability(clone).parse();
+            if (article && article.content) {
+                var text = readableInnerText(article.content);
+                if (text && text.trim().length > 0) { return text; }
+            }
+        } catch (e) {}
         var el = document.querySelector('article')
               || document.querySelector('main')
               || document.body;
@@ -69,6 +98,9 @@ extension ArticleExtractor: WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
             do {
+                if !Self.readabilityScript.isEmpty {
+                    _ = try await webView.evaluateJavaScript(Self.readabilityScript)
+                }
                 let result = try await webView.evaluateJavaScript(Self.extractionScript)
                 let text = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if text.isEmpty {

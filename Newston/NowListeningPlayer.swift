@@ -78,6 +78,7 @@ final class NowListeningPlayer {
 
     private let synthesizer: SpeechSynthesizing
     private let extractor: ArticleExtracting
+    private let cleaner: ArticleCleaning
     private let recognizer: SpeechRecognizing
     private let commandParser = CommandParser()
     private weak var modelContext: ModelContext?
@@ -87,10 +88,12 @@ final class NowListeningPlayer {
     init(
         synthesizer: SpeechSynthesizing? = nil,
         extractor: ArticleExtracting? = nil,
+        cleaner: ArticleCleaning? = nil,
         recognizer: SpeechRecognizing? = nil
     ) {
         self.synthesizer = synthesizer ?? SpeechSynthesizerService()
         self.extractor = extractor ?? ArticleExtractor()
+        self.cleaner = cleaner ?? DefaultArticleCleaner()
         self.recognizer = recognizer ?? SpeechRecognizerService()
         loadVoices()
         startEventLoop()
@@ -356,14 +359,15 @@ final class NowListeningPlayer {
         if let cached = headline.article?.bodyText, !cached.isEmpty {
             return cached
         }
-        let body = try await extractor.extractBody(from: headline.articleURL)
-        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let context = modelContext, !trimmed.isEmpty {
-            let article = Article(bodyText: trimmed, extractor: "naive-js", headline: headline)
+        let raw = try await extractor.extractBody(from: headline.articleURL)
+        let cleaned = cleaner.clean(raw, language: headline.source?.languageCode)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let context = modelContext, !cleaned.isEmpty {
+            let article = Article(bodyText: cleaned, extractor: "readability-v1+cleanup-v1", headline: headline)
             context.insert(article)
             try? context.save()
         }
-        return trimmed
+        return cleaned
     }
 
     // MARK: - Event loops
