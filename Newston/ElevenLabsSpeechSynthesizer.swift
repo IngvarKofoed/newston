@@ -188,7 +188,7 @@ final class ElevenLabsSpeechSynthesizer: SpeechSynthesizing {
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         let body: [String: Any] = [
             "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "model_id": "eleven_flash_v2_5",
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -230,8 +230,8 @@ final class ElevenLabsSpeechSynthesizer: SpeechSynthesizing {
     private static func voiceId(for language: String?) -> String {
         let prefix = language?.lowercased().prefix(2) ?? ""
         switch prefix {
-        case "da": return "pNInz6obpgDQGcFmaJgB"  // Adam — multilingual, swap once we hear it
-        default:   return "21m00Tcm4TlvDq8ikWAM"  // Rachel — multilingual
+        case "da": return "kmSVBPu7loj4ayNinwWM"
+        default:   return "UaYTS0wayjmO9KD1LR4R"
         }
     }
 }
