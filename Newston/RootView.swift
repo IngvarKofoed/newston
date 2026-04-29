@@ -12,6 +12,9 @@ struct RootView: View {
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+
+            HelpView()
+                .tabItem { Label("Help", systemImage: "questionmark.circle") }
         }
     }
 }

@@ -3,6 +3,7 @@ import Foundation
 enum VoiceCommand: Equatable {
     case next
     case previous
+    case back
     case go
     case stop
     case pause
@@ -37,12 +38,13 @@ struct CommandParser {
     }
 
     // Multi-word patterns must come before their single-word substrings.
-    private static let patterns: [(VoiceCommand, [String])] = [
+    static let patterns: [(VoiceCommand, [String])] = [
         (.go, ["read this", "go", "okay", "ok", "open", "read", "yes"]),
         (.stop, ["stop", "cancel", "quit", "shut up"]),
         (.pause, ["pause", "wait"]),
         (.resume, ["resume", "continue", "go on", "play"]),
-        (.previous, ["previous", "prev", "back", "before"]),
+        (.previous, ["previous", "prev", "before"]),
+        (.back, ["back", "exit", "leave", "close"]),
         (.next, ["next", "forward", "skip"]),
     ]
 }

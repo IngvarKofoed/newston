@@ -260,9 +260,12 @@ final class NowListeningPlayer {
 
     func stop() {
         synthesizer.stop()
-        if level == .article {
-            path.removeLast()
-        }
+    }
+
+    func back() {
+        synthesizer.stop()
+        guard !path.isEmpty else { return }
+        path.removeLast()
     }
 
     func pause() {
@@ -388,6 +391,7 @@ final class NowListeningPlayer {
         switch command {
         case .next: next()
         case .previous: previous()
+        case .back: back()
         case .go: go()
         case .stop: stop()
         case .pause: pause()
