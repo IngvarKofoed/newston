@@ -69,10 +69,10 @@ final class NowListeningPlayer {
     var lastRecognizedText: String { recognizer.lastTranscript }
     var voiceStartupError: String? { recognizer.startupError }
 
-    private let synthesizer: SpeechSynthesizing
+    private var synthesizer: SpeechSynthesizing
     // Typed reference to the AVSpeech synth when active, used for voice
     // picker pass-throughs. Nil when a non-AVSpeech provider is in use.
-    private let systemSynth: SystemSpeechSynthesizer?
+    private var systemSynth: SystemSpeechSynthesizer?
     private let extractor: ArticleExtracting
     private let cleaner: ArticleCleaning
     private let recognizer: SpeechRecognizing
@@ -87,7 +87,7 @@ final class NowListeningPlayer {
         cleaner: ArticleCleaning? = nil,
         recognizer: SpeechRecognizing? = nil
     ) {
-        let resolvedSynth = synthesizer ?? SystemSpeechSynthesizer()
+        let resolvedSynth = synthesizer ?? Self.makeSynthesizer()
         self.synthesizer = resolvedSynth
         self.systemSynth = resolvedSynth as? SystemSpeechSynthesizer
         self.extractor = extractor ?? ArticleExtractor()
@@ -95,6 +95,30 @@ final class NowListeningPlayer {
         self.recognizer = recognizer ?? SpeechRecognizerService()
         startEventLoop()
         startTranscriptsLoop()
+    }
+
+    func setProvider(_ provider: TTSProvider) {
+        synthesizer.stop()
+        eventsTask?.cancel()
+        eventsTask = nil
+        let newSynth = Self.makeSynthesizer(for: provider)
+        synthesizer = newSynth
+        systemSynth = newSynth as? SystemSpeechSynthesizer
+        startEventLoop()
+    }
+
+    private static func makeSynthesizer(for provider: TTSProvider? = nil) -> SpeechSynthesizing {
+        let resolved = provider ?? Self.currentProvider()
+        switch resolved {
+        case .iOSVoices:  return SystemSpeechSynthesizer()
+        case .elevenLabs: return ElevenLabsSpeechSynthesizer()
+        }
+    }
+
+    private static func currentProvider() -> TTSProvider {
+        guard let raw = UserDefaults.standard.string(forKey: SettingsKey.ttsProvider),
+              let p = TTSProvider(rawValue: raw) else { return .iOSVoices }
+        return p
     }
 
     func setModelContext(_ context: ModelContext) {

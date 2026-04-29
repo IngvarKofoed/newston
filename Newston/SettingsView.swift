@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(NowListeningPlayer.self) private var player
     @AppStorage(SettingsKey.ttsProvider) private var provider: TTSProvider = .iOSVoices
 
     var body: some View {
@@ -11,6 +12,9 @@ struct SettingsView: View {
                         ForEach(TTSProvider.allCases) { p in
                             Text(p.displayName).tag(p)
                         }
+                    }
+                    .onChange(of: provider) { _, newValue in
+                        player.setProvider(newValue)
                     }
 
                     if provider == .elevenLabs {
